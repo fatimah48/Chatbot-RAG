@@ -1,11 +1,8 @@
-import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QFrame, QSizePolicy
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QIcon, QPixmap
+from flask import Flask, request, jsonify, render_template_string
 from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.llms.ollama import Ollama
-from langchain_chroma import Chroma
 import re
 
 from get_embedding_function import get_embedding_function
@@ -22,169 +19,249 @@ Answer the question based only on the following context:
 Answer the question based on the above context: {question}
 """
 
-class QueryThread(QThread):
-    response_ready = pyqtSignal(str)
+app = Flask(__name__)
 
-    def __init__(self, query_text):
-        super().__init__()
-        self.query_text = query_text
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        query_text = request.form['query_text']
+        response_text = query_rag(query_text)
+        return jsonify({"response": response_text})
+    return render_template_string('''
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <title>AI Assistant Tool</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+                header { 
+                    background: linear-gradient(to right, #30cfd0, #330867);
+                    color: white;
+                    padding: 20px;
+                    text-align: center;
+                    font-size: 24px;
+                }
+                .chat-container { max-width: 600px; margin: 20px auto; }
+                .chat-box { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: auto; background-color: #f4f4f4; white-space: pre-wrap; }
+                .message { margin: 10px 0; padding: 10px; border-radius: 10px; display: flex; align-items: center;max-width: 100%;  }
+                .user { background-color: #d1e7dd;}
+                .bot { background-color: #cce5ff; color: #004085; max-width: 100%; }
+                .message img { width: 30px; height: 30px; margin-right: 10px; border-radius: 50%;max-width: 100%; }
+                .input-box { display: flex; margin-top: 10px; }
+                .input-box input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 5px 0 0 5px; }
+                .input-box button { padding: 10px; border: 1px solid #ccc; border-left: none; background-color: #007bff; color: white; border-radius: 0 5px 5px 0; cursor: pointer; }
+                .input-box button:hover { background-color: #0056b3; }
+                .source-list { margin-top: 20px; padding-left: 20px; margin-bottom: 20px; }
+                .card-container {
+                    display: flex;
+                    justify-content: space-evenly;
+                    position: fixed;
+                    bottom: 20px;
+                    width: 100%;
+                    left: 0;
+                    overflow: hidden;
+                    padding: 0 10px;
+                }
+                .promotion-text {
+                    text-align: center;
+                    font-size: 20px;
+                    color: #800080; /* Dark purple */
+                    position: relative;
+                    top: 60px; /* Adjust this value to move the text down */
+                    font-weight: bold;
+                }
+                        
+                .card {
+                    background-color: #bbe4e9;
+                    border-radius: 10px;
+                    padding: 10px 20px;
+                    margin: 5px;
+                    font-size: 14px;
+                    # opacity: 0.4;
+                    color: #333;
+                    font-weight: bold;
+                    text-align: center;
+                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+                    transition: opacity 0.3s ease, transform 0.3s ease, background-color 0.3s ease;
+                }
+           
+                .card.active{
+                    opacity:1;
+                    transform:scale(1.05); 
+                    background-color: #b39ddb;        
+                                  }
+                                  
 
-    def run(self):
-        response_text = self.query_rag(self.query_text)
-        self.response_ready.emit(response_text)
+                .card:hover {
+                    transform: scale(1.05);
+                   
+                }
+                
+              
+                                  
+           
 
-    def query_rag(self, query_text):
-        if query_text.lower() in ['hi', 'hello', 'hey']:
-            return "Hello! How can I assist you today?\n I'm AI Assistant tool to answer questions, resolve errors and provide user manuals for SAP"
-        elif query_text.lower() in ['how are you?', 'how are u?', 'how are you', 'how are u']:
-            return "I'm doing well! How about you?"
+               
 
-        embedding_function = get_embedding_function()
-        db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
+            </style>
+        </head>
+        <body>
+            <div style="position: absolute; top: 20px; left: 20px; display: flex; align-items: center;">
+                <img src="https://img.icons8.com/?size=100&id=wsixpbozZFBy&format=png&color=000000" alt="icon" style="width:30px; height:30px; vertical-align: middle;">
+                <span style="font-size: 14px; margin-left: 10px;color: white;">Retrieval Augmented Generation</span>
+            </div>
 
-        results = db.similarity_search_with_score(query_text, k=2)
+            <header>
+                <b>Welcome to AI Assistant Tool</b>
 
-        if not results:
-            return "Sorry, I don't understand your question. Please try asking something else."
+            </header>
+            <div class="chat-container">
+                <div class="chat-box" id="chat-box"></div>
+                <div class="input-box">
+                    <input type="text" id="query_text" placeholder="Ask something...">
+                    <button onclick="sendQuery()">
+                        <img src="https://img.icons8.com/ios-filled/50/ffffff/send.png" alt="Send" style="width: 20px; height: 20px;">
+                    </button>
+                    <button id="clear-button">
+                         <img src="https://img.icons8.com/?size=100&id=47576&format=png&color=000000" alt="Clear" style="width:20px; height:20px;">
+                    </button>
 
-        context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
+                </div>
+            </div>
+            <script>
+                function appendMessage(text, type) {
+                    const chatBox = document.getElementById('chat-box');
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message ' + type;
 
-        urls = self.extract_urls(context_text)
+                    const img = document.createElement('img');
+                    if (type === 'user') {
+                        img.src = 'https://img.icons8.com/?size=100&id=kDoeg22e5jUY&format=png&color=000000'; // User image
+                    } else {
+                        img.src = 'https://img.icons8.com/?size=100&id=XiSP6YsZ9SZ0&format=png&color=000000'; // Bot image
+                    }
 
-        prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-        prompt = prompt_template.format(context=context_text, question=query_text)
+                    messageDiv.appendChild(img);
+                    const textNode = document.createTextNode(text);
+                    messageDiv.appendChild(textNode);
+                    
+                    chatBox.appendChild(messageDiv);
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+                
+                function sendQuery() {
+                    const queryText = document.getElementById('query_text').value;
+                    appendMessage(queryText, 'user');
+                    
+                    fetch('/', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({ 'query_text': queryText })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        appendMessage(data.response, 'bot');
+                        document.getElementById('query_text').value = ''; // Clear input field after sending
+                    });
+                }
+                document.getElementById("clear-button").addEventListener("click", function() {
+                    document.querySelector(".chat-box").innerHTML = "";
+                });
+                document.addEventListener("DOMContentLoaded", function() {
+                        const cards = document.querySelectorAll(".card");
+                        let currentCard = 0;
+                        function showCard(n) {
 
-        model = Ollama(model="mistral")
-        response_text = model.invoke(prompt)
+                            cards.forEach(card => card.classList.remove('active'));
+                            cards[n].classList.add('active');
 
-        sources = [doc.metadata.get("id", None) for doc, _score in results]
-        formatted_response = f"{response_text}\n\nSources:\n" + "\n".join(f"- {source}" for source in sources)
+                        }
 
-        if urls:
-            formatted_response += "\n\nHere are some relevant links from the documents:\n" + "\n".join(urls)
+                        function nextCard() {
 
-        return formatted_response
+                            currentCard = (currentCard + 1) % cards.length;
+                            showCard(currentCard);
 
-    def extract_urls(self, text):
-        url_pattern = r'(https?://[^\s]+)'
-        return re.findall(url_pattern, text)
+                        }
+                        // Show the first card initially
+                        showCard(currentCard);
+                        // Automatically move to the next card every 3 seconds
+                        setInterval(nextCard, 3000);
 
-class AIChatApp(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("AI Assistant Tool")
-        self.setGeometry(100, 100, 800, 600)
+                    });
 
-        self.initUI()
+                    
+                                                    
+                    
+                
+            </script>
+                                  
+            <div class="promotion-text">
+                Empower Your Workflow – Use the Chatbot for Instant Assistance!
+            </div>
+                                  
+            <div class="card-container">
+                <div class="card">Provides real-time error resolutions</div>
+                <div class="card">Get Access to necessary files/Manuals</div>
+                <div class="card">Answers frequently asked questions</div>
+                <div class="card">Connects you with the right support team</div>
+            </div>
 
-    def initUI(self):
-        layout = QVBoxLayout()
+        </body>
+        </html>
+    ''')
+def extract_urls(text):
+    # Simple regex to extract URLs from the text
+    url_pattern = r'(https?://[^\s]+)'
+    return re.findall(url_pattern, text)
 
-        # Header
-        self.header = QLabel("<b>Welcome to SAP AI Assistant Tool</b>")
-        self.header.setAlignment(Qt.AlignCenter)
-        self.header.setFixedHeight(50)
-        self.header.setStyleSheet(""" 
-            background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #330867, stop:1 #30cfd0);
-            color: white;
-            font-size: 24px;
-            padding: 10px;
-        """)
-        layout.addWidget(self.header)
+def query_rag(query_text: str):
+    # Handle simple greetings or casual conversation
+    if query_text.lower() in ['hi', 'hello', 'hey']:
+        return "Hello! How can I assist you today?\n I'm AI Assistant tool to answer questions, resolve errors and provide user manuals for SAP"
+    elif query_text.lower() in ['how are you?', 'how are u?', 'how are you', 'how are u']:
+        return "I'm doing well!, how about you?"
+  
 
-        # Chat container setup
-        self.chat_container = QScrollArea()
-        self.chat_widget = QWidget()  # Create a widget to hold messages
-        self.chat_layout = QVBoxLayout(self.chat_widget)  # Use a vertical layout for messages
-        self.chat_container.setWidget(self.chat_widget)
-        self.chat_container.setWidgetResizable(True)
-        self.chat_container.setStyleSheet("background-color: #f4f4f4; padding: 10px;")
-        layout.addWidget(self.chat_container)
+    # Prepare the DB.
+    embedding_function = get_embedding_function()
+    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
 
-        # Input layout
-        input_layout = QHBoxLayout()
+    # Search the DB.
+    results = db.similarity_search_with_score(query_text, k=2)
 
-        self.input_box = QLineEdit()
-        self.input_box.setPlaceholderText("Ask something...")
-        input_layout.addWidget(self.input_box)
+    if not results:
+        # Return a default response if no relevant results are found
+        return "Sorry, I don't understand your question. Please try asking something else."
+    
+    
+  
+    
 
-        # Send button (with icon)
-        self.send_button = QPushButton()
-        self.send_button.setIcon(QIcon("send.png"))
-        self.send_button.setIconSize(QSize(40, 40))  # Adjust icon size here
-        self.send_button.clicked.connect(self.send_query)
-        self.send_button.setStyleSheet("border: none;")
-        input_layout.addWidget(self.send_button)
+    context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
 
-        # Clear button (with icon)
-        # self.clear_button = QPushButton()
-        # self.clear_button.setIcon(QIcon("clear.png"))
-        # self.clear_button.setIconSize(QSize(20, 40))  # Adjust icon size here
-        # self.clear_button.clicked.connect(self.clear_chat)
-        # self.clear_button.setStyleSheet("border: none;")
-        # input_layout.addWidget(self.clear_button)
+    # Extract URLs from the context
+    urls = extract_urls(context_text)
 
-        layout.addLayout(input_layout)
-        self.setLayout(layout)
+    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+    prompt = prompt_template.format(context=context_text, question=query_text)
 
-    def append_message(self, text, msg_type):
-        # Set up a horizontal layout for messages
-        message_layout = QHBoxLayout()
-        
-        # Add user/bot icon
-        icon_label = QLabel()
-        if msg_type == "user":
-            icon_label.setPixmap(QPixmap("user_logo.png"))  # Replace with your user logo path
-            bg_color = "#d3eafd"  # Light blue for user message
-        else:
-            icon_label.setPixmap(QPixmap("bot_logo.png"))  # Replace with your bot logo path
-            bg_color = "#d0f0c0"  # Light green for bot message
+    model = Ollama(model="mistral")
+    response_text = model.invoke(prompt)
 
-        icon_label.setFixedSize(80, 80)
-        icon_label.setScaledContents(True)
+    sources = [doc.metadata.get("id", None) for doc, _score in results]
+    formatted_response = f"{response_text}\n\nSources:\n" + "\n".join(f"- {source}" for source in sources)
+    # return formatted_response
 
-        # Create message label
-        message_label = QLabel(text)
-        message_label.setWordWrap(True)
-        message_label.setStyleSheet(f"background-color: {bg_color}; padding: 8px; border-radius: 8px;")
-        message_label.setFrameStyle(QFrame.Box)
-        message_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Maximum)  # Adjust size policy
+      # If URLs are found, include them in the response
+    if urls:
+        formatted_response += "\n\nHere are some relevant links from the documents:\n" + "\n".join(urls)
 
-        # Align messages and icons
-        if msg_type == "user":
-            message_layout.addWidget(icon_label)
-            message_layout.addWidget(message_label, 1)
-        else:
-            message_layout.addWidget(message_label, 1)
-            message_layout.addWidget(icon_label)
+    return formatted_response
 
-        # Add the message layout to the chat widget's layout
-        self.chat_layout.addLayout(message_layout)
-
-        # Scroll to the bottom
-        self.chat_container.verticalScrollBar().setValue(self.chat_container.verticalScrollBar().maximum())
-
-    def send_query(self):
-        query_text = self.input_box.text()
-        if query_text:
-            self.append_message(query_text, "user")
-            self.input_box.clear()
-
-            # Start the background thread for bot response
-            self.thread = QueryThread(query_text)
-            self.thread.response_ready.connect(self.handle_bot_response)
-            self.thread.start()
-
-    def handle_bot_response(self, response_text):
-        self.append_message(response_text, "bot")
-
-    def clear_chat(self):
-        self.chat_layout = QVBoxLayout(self.chat_widget)  # Reset the layout to clear messages
-        self.chat_widget.setLayout(self.chat_layout)  # Reassign the layout
-        self.chat_container.verticalScrollBar().setValue(self.chat_container.verticalScrollBar().maximum())  # Reset scroll bar
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    ai_chat_app = AIChatApp()
-    ai_chat_app.show()
-    sys.exit(app.exec_())
+    app.run(debug=True)
+
+
